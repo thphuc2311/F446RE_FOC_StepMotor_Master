@@ -18,7 +18,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "can.h"
+#include "dma.h"
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
@@ -26,8 +28,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
 #include <stdbool.h>
+#include <math.h>
 #include "usbd_cdc_if.h"
+#include "NTC_10K_LUT.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,6 +43,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define MOTOR_ONE_CIRCLE_SUBDIVIDE_STEPS  51200   /* 100 steps x 256 micro-steps (must match slave) */
+#define MAX_BUFFER_SIZE 50
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,6 +55,27 @@
 
 /* USER CODE BEGIN PV */
 volatile uint8_t CMDSend = 0;
+
+volatile int32_t g_Velocity = 0, g_Position = 0;
+volatile bool g_VelocityState = false, g_PositionState = false;
+volatile int32_t g_TempValues = 0;
+volatile bool g_TempState = false;
+volatile Temperature_t Slave_Temperature;
+
+volatile bool isSent = false;
+volatile bool IscmdIncomming = false;
+volatile uint16_t Size_Rx = 0;
+
+uint8_t bufferTxUART[MAX_BUFFER_SIZE] = "hello world UART\n";
+uint8_t bufferRxUART[MAX_BUFFER_SIZE];
+uint8_t bufferRxCmd[MAX_BUFFER_SIZE];
+uint8_t bufferTxUSB[] = "hello world USB\n";
+
+uint16_t ADC_VAL[3];
+float voltage = 0.0f,vref = 0.0f, temperature = 0.0f;
+float Vdda_mV = 0.0f, MCU_Temperature = 0.0f, NTC_Temperature = 0.0f;
+volatile bool ADC_ConvertReady = false;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,6 +86,36 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	UNUSED(huart);
+	isSent = true;
+//	memset(bufferTxUART, 0, sizeof(bufferTxUART));
+//	memcpy(bufferTxUART, bufferRxUART, sizeof(bufferRxUART));
+}
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+//  UNUSED(huart);
+	if(huart->Instance == USART2)
+	{
+
+		if(Size > Size_Rx)
+		{
+			memcpy(bufferRxCmd, bufferRxUART, Size);
+		}
+		else
+		{
+			memcpy(bufferRxCmd, bufferRxUART, Size);
+			memset(bufferRxCmd + Size, 0, Size_Rx - Size);
+		}
+		Size_Rx = Size;
+		IscmdIncomming = true;
+
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, bufferRxUART, MAX_BUFFER_SIZE);
+	}
+}
 
 /* ------------------------------------------------------------------ */
 /*  CAN command wrappers – one per switch-case in Slave OnCanCmd()    */
@@ -245,6 +302,20 @@ void GetOffset()
 	CAN_Send(&TxHeader, TxData);
 }
 
+/* 0x25 – Get Current-Limit of slave */
+void GetCurrentLimit()
+{
+	TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x25;
+	CAN_Send(&TxHeader, TxData);
+}
+
+/* 0x26 – Get MCU & NTC temperature of slave */
+void GetTemperature()
+{
+	TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x26;
+	CAN_Send(&TxHeader, TxData);
+}
+
 /* 0x7D – Undo Configs (restore to current in-flash config & reboot) */
 void UndoConfigs()
 {
@@ -305,6 +376,119 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		}
 	}
 }
+
+float NTC_GetTemperature(uint16_t adc_raw)
+{
+    if (adc_raw == 0) adc_raw = 1;
+
+    // B1: Tính R_NTC từ ADC (NTC phía trên, R_fixed phía dưới)
+    float r_ntc = R_FIXED * (ADC_MAX / (float)adc_raw - 1.0f);
+
+    // B2: Giới hạn trong dải bảng
+    if (r_ntc >= ntc_tem_res_table[0].NTC_Resistor) return ntc_tem_res_table[0].temperature;
+    if (r_ntc <= ntc_tem_res_table[NTC_TABLE_SIZE-1].NTC_Resistor) return ntc_tem_res_table[NTC_TABLE_SIZE-1].temperature;
+
+    // B3: Tìm khoảng chứa r_ntc (bảng R giảm dần theo T tăng)
+    for (uint8_t i = 0; i < NTC_TABLE_SIZE - 1; i++)
+    {
+        if (r_ntc <= ntc_tem_res_table[i].NTC_Resistor && r_ntc >= ntc_tem_res_table[i+1].NTC_Resistor)
+        {
+            // B4: Nội suy tuyến tính giữa 2 điểm gần nhất
+            float r1 = ntc_tem_res_table[i].NTC_Resistor,   t1 = ntc_tem_res_table[i].temperature;
+            float r2 = ntc_tem_res_table[i+1].NTC_Resistor, t2 = ntc_tem_res_table[i+1].temperature;
+
+            return t1 + (r_ntc - r1) * (t2 - t1) / (r2 - r1);
+        }
+    }
+    return -999.0f;
+}
+
+bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
+{
+	char *saveptr = NULL;
+	char *action = strtok_r(cmd,  " \r\n", &saveptr); // set
+//	char *group  = strtok_r(NULL, " \r\n", &saveptr); // position
+	char *param  = strtok_r(NULL, " \r\n", &saveptr); // pos
+	char *value  = strtok_r(NULL, " \r\n", &saveptr); // 10
+	char *extra  = strtok_r(NULL, " \r\n", &saveptr); // junk
+
+	// 4 important token
+	if(!action /*||!group*/ ||!param /*||!value*/ ||extra)
+	{
+		return false;
+	}
+
+	*_currentAction = action;
+	*_currentParam = param;
+
+	if((strcmp(action, "set") == 0) && (*value != 0))
+	{
+		// convert string to numeric values
+		char *endptr = NULL;
+		long val = strtol(value, &endptr, 10);
+
+		// ignoring non numeric or redundant character
+		if(endptr == value || *endptr != '\0' /*|| !isfinite(val)*/)
+		{
+			return false;
+		}
+
+		if(strcmp(param, "pos") == 0) // 0x05 – Set Position SetPoint
+		{
+			SetPositionSetPoint((int32_t)val, 0);
+		}
+		else if(strcmp(param, "vel") == 0)
+		{
+			SetVelocitySetPoint((int32_t)val);
+		}
+		else if(strcmp(param, "curlim") == 0)
+		{
+			SetCurrentLimit((int32_t)val,0);
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else if(strcmp(action, "get") == 0)
+	{
+		if(strcmp(param, "vel") == 0) // 0x22 – Get Velocity
+		{
+			GetVelocity();
+		}
+		else if(strcmp(param, "pos") == 0) // 0x23 – Get Angle
+		{
+			UpdateAngle();
+		}
+		else if(strcmp(param, "curlim") == 0) // 0x25 – Get Current-Limit
+		{
+			GetCurrentLimit();
+		}
+		else if(strcmp(param, "temp") == 0) // 0x25 – Get Current-Limit
+		{
+			GetTemperature();
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+	if(hadc->Instance == ADC1)
+	{
+		ADC_ConvertReady = true;
+	}
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -336,19 +520,85 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-//  MX_CAN1_Init();
+  MX_DMA_Init();
+  MX_CAN1_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, sizeof(bufferTxUART)-1);
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, bufferRxUART, MAX_BUFFER_SIZE);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_VAL, 3);
+  uint8_t bufferADC_UART[100];
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  CDC_Transmit_FS((uint8_t*)"helloworld", 12);
-	  HAL_Delay(1000);
+//	  CDC_Transmit_FS((uint8_t*)bufferTxUSB, sizeof(bufferTxUSB));
+//
+//	  if ((isSent == true) && (Size_Rx != 0))
+//	  {
+//		  HAL_UART_Transmit_DMA(&huart2, bufferRxUART, Size_Rx);
+//		  isSent = false;
+//	  }
+
+	  if(ADC_ConvertReady == true)
+	  {
+		  ADC_ConvertReady = false;
+
+			vref = 3300.0f * (float)*VREFINT_CAL_ADDR / (float)ADC_VAL[0]; 	// read vrefint
+			voltage = (float)ADC_VAL[1] * vref / 4095.0f; 			// read ADC at temp sensor - Vsense
+
+			// Hai điểm hiệu chuẩn, đơn vị mV
+			float V30  = (float)*TEMPSENSOR_CAL1_ADDR * 3300.0f / 4095.0f;
+			float V110 = (float)*TEMPSENSOR_CAL2_ADDR * 3300.0f / 4095.0f;
+
+			MCU_Temperature = 30.0f + (voltage - V30) * 80.0f / (V110 - V30);
+			NTC_Temperature = NTC_GetTemperature(ADC_VAL[2]);
+
+			HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_VAL, 3);
+	  }
+
+//	  memset(bufferADC_UART, 0, sizeof(bufferADC_UART));
+//	  snprintf((char*)bufferADC_UART, sizeof(bufferADC_UART),"Vref: %.3f MCU: %.3f NTC: %.3f ,ADC[0]:%u, ADC[1]:%u, ADC[2]:%u \n", vref, MCU_Temperature, NTC_Temperature, ADC_VAL[0], ADC_VAL[1], ADC_VAL[2]);
+//	  HAL_UART_Transmit_DMA(&huart2, bufferADC_UART, strlen((char*)bufferADC_UART));
+
+	  if(IscmdIncomming == true)
+	  {
+		  IscmdIncomming = false;
+		  char *currentAction = NULL, *currentParam = NULL;
+
+		  if(ParseCommand((char*)bufferRxCmd, &currentAction, &currentParam) == true)
+		  {
+			  if(strcmp(currentAction,"get") == 0)
+			  {
+//				  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s %ld Cmd OK\n", currentAction, currentParam, g_TempValues);
+				  if(strcmp(currentParam,"temp") == 0)
+				  {
+					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK MCU:%.3f NTC:%.3f\n", currentAction, currentParam, Slave_Temperature.MCU_Temperature, Slave_Temperature.NTC_Temperature);
+				  }
+				  else
+				  {
+					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s %ld Cmd OK\n", currentAction, currentParam, g_TempValues);
+				  }
+			  }
+			  else
+			  {
+				  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK\n", currentAction, currentParam);
+			  }
+
+			  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
+		  }
+		  else
+		  {
+			  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"Cmd NOK\n");
+			  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
+		  }
+	  }
+
+	  HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

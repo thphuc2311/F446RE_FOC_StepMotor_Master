@@ -31,12 +31,32 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+typedef enum
+{
+    STATE_STOP,
+    STATE_FINISH,
+    STATE_RUNNING,
+    STATE_OVERLOAD,
+    STATE_STALL,
+    STATE_NO_CALIB
+} State_t;
 
+typedef struct
+{
+	float MCU_Temperature;
+	float NTC_Temperature;
+}Temperature_t;
+extern volatile Temperature_t Slave_Temperature;
+
+extern volatile int32_t g_Velocity, g_Position;
+extern volatile bool g_VelocityState, g_PositionState;
+extern volatile int32_t g_TempValues;
+extern volatile bool g_TempState;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

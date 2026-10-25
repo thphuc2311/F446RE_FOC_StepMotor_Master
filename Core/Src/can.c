@@ -176,7 +176,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* CanHandle)
     }
     uint8_t id = (RxHeader.StdId >> 7); // 4Bits ID & 7Bits Msg
     uint8_t cmd = RxHeader.StdId & 0x7F; // 4Bits ID & 7Bits Msg
-    if (id == 0 || id == ThisCAN_NodeId)
+    if (id == 0 || id == TargetCAN_NodeId)
     {
     	OnCanCmdResponded(cmd, RxData, RxHeader.DLC);
     }
@@ -184,12 +184,41 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* CanHandle)
 
 void OnCanCmdResponded(uint8_t _cmd, uint8_t* _data, uint32_t _len)
 {
+	g_TempValues = 0;
+	g_TempState = 5;
     switch (_cmd)
     {
+    	case 0x22: // Mode GetVelocity() from slave
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+			int32_t Temp_Velocity = 0;
+			memcpy(&Temp_Velocity, _data, sizeof(int32_t));
+			g_TempValues = Temp_Velocity;
+			g_TempState = _data[4] == STATE_FINISH ? true : false;
+
+		break;
+
         case 0x23: // Mode GetPosition() from slave for UpdateAngle()
         	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
         	int32_t Temp_Position = 0;
-        	memcpy(&Temp_Position, _data, sizeof(Temp_Position));
+        	memcpy(&Temp_Position, _data, sizeof(int32_t));
+        	g_TempValues = Temp_Position;
+        	g_TempState = _data[4] == STATE_FINISH ? true : false;
+		break;
+
+        case 0x25: // Mode GetCurrentLimit() from slave
+			int32_t Temp_CurrentLimit = 0;
+			memcpy(&Temp_CurrentLimit, _data, sizeof(int32_t));
+			g_TempValues = Temp_CurrentLimit;
+		break;
+
+        case 0x26: // Mode GetTemperature() from slave
+        {
+        	float l_MCU_Temperature = 0.0f, l_NTC_Temperature = 0.0f;
+        	memcpy(&l_MCU_Temperature, _data		, sizeof(float));
+			memcpy(&l_NTC_Temperature, _data + 4	, sizeof(float));
+			Slave_Temperature.MCU_Temperature = l_MCU_Temperature;
+			Slave_Temperature.NTC_Temperature = l_NTC_Temperature;
+        }
 		break;
         default: break;
     }
