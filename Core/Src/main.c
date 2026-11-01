@@ -33,6 +33,7 @@
 #include <math.h>
 #include "usbd_cdc_if.h"
 #include "NTC_10K_LUT.h"
+#include "frame.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -346,13 +347,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 		if(CMDSend == 2)
 		{
-			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+//			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
 			TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x01;
 			CAN_Send(&TxHeader, TxData);
 		}
 		else if(CMDSend == 3)
 		{
-			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+//			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 			SetVelocitySetPoint(5 * MOTOR_ONE_CIRCLE_SUBDIVIDE_STEPS);
 		}
 		else if(CMDSend == 4)
@@ -598,6 +599,9 @@ int main(void)
   {
 	  TestingFunc();
 
+	  Frame_UsbRxParseCmd();
+	  Frame_Task();
+
 	  if(IscmdIncomming == true)
 	  {
 		  IscmdIncomming = false;
@@ -630,7 +634,6 @@ int main(void)
 		  }
 	  }
 
-	  HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

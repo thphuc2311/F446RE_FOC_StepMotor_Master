@@ -21,6 +21,7 @@
 #include "can.h"
 
 /* USER CODE BEGIN 0 */
+#include "frame.h"
 CAN_TxHeaderTypeDef TxHeader;
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t TxData[8];
@@ -79,7 +80,8 @@ void MX_CAN1_Init(void)
 
   HAL_CAN_Start(&hcan1); //start CAN
 
-  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING);
+  /* CAN_IT_ERROR is a common error notification for CAN bus errors, usualy combined with other notifications */
+  HAL_CAN_ActivateNotification(&hcan1,CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_RX_FIFO0_OVERRUN | CAN_IT_BUSOFF | CAN_IT_ERROR);
 
 /* Configure Transmission process */
   TxHeader.StdId = ThisCAN_NodeId;
@@ -179,6 +181,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* CanHandle)
     if (id == 0 || id == TargetCAN_NodeId)
     {
     	OnCanCmdResponded(cmd, RxData, RxHeader.DLC);
+    	Frame_OnCanResponse(id, cmd, RxData, RxHeader.DLC);
     }
 }
 
@@ -189,7 +192,7 @@ void OnCanCmdResponded(uint8_t _cmd, uint8_t* _data, uint32_t _len)
     switch (_cmd)
     {
     	case 0x22: // Mode GetVelocity() from slave
-			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+//			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
 			int32_t Temp_Velocity = 0;
 			memcpy(&Temp_Velocity, _data, sizeof(int32_t));
 			g_TempValues = Temp_Velocity;
@@ -198,7 +201,7 @@ void OnCanCmdResponded(uint8_t _cmd, uint8_t* _data, uint32_t _len)
 		break;
 
         case 0x23: // Mode GetPosition() from slave for UpdateAngle()
-        	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+//        	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
         	int32_t Temp_Position = 0;
         	memcpy(&Temp_Position, _data, sizeof(int32_t));
         	g_TempValues = Temp_Position;
@@ -223,5 +226,20 @@ void OnCanCmdResponded(uint8_t _cmd, uint8_t* _data, uint32_t _len)
 		break;
         default: break;
     }
+}
+
+/* RX FIFO0 overrun = MCU can't keep up with CAN load -> warn via LED */
+void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
+{
+	if (hcan->ErrorCode & HAL_CAN_ERROR_RX_FOV0)
+	{
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+		__HAL_CAN_CLEAR_FLAG(hcan, CAN_FLAG_FOV0);
+	}
+	/* Bus-Off = node left the bus (disconnection / no ACK) -> warn via LED */
+	if (hcan->ErrorCode & HAL_CAN_ERROR_BOF)
+	{
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+	}
 }
 /* USER CODE END 1 */
