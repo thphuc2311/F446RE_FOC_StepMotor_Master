@@ -218,6 +218,7 @@ void OnCanCmdResponded(uint8_t _cmd, uint8_t* _data, uint32_t _len)
 			memcpy(&l_NTC_Temperature, _data + 4	, sizeof(float));
 			Slave_Temperature.MCU_Temperature = l_MCU_Temperature;
 			Slave_Temperature.NTC_Temperature = l_NTC_Temperature;
+			Cmd_Reponse = true;
         }
 		break;
         default: break;

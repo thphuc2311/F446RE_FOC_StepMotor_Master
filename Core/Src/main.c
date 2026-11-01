@@ -69,12 +69,13 @@ volatile uint16_t Size_Rx = 0;
 uint8_t bufferTxUART[MAX_BUFFER_SIZE] = "hello world UART\n";
 uint8_t bufferRxUART[MAX_BUFFER_SIZE];
 uint8_t bufferRxCmd[MAX_BUFFER_SIZE];
-uint8_t bufferTxUSB[] = "hello world USB\n";
+uint8_t bufferTxUSB[30] = "hello world USB\n";
 
 uint16_t ADC_VAL[3];
 float voltage = 0.0f,vref = 0.0f, temperature = 0.0f;
 float Vdda_mV = 0.0f, MCU_Temperature = 0.0f, NTC_Temperature = 0.0f;
 volatile bool ADC_ConvertReady = false;
+volatile bool Cmd_Reponse = true;
 
 /* USER CODE END PV */
 
@@ -489,6 +490,65 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 	}
 }
 
+void TestingFunc()
+{
+//	/* USB CDC */
+//	if(recvDone == 1)
+//	{
+//	  if(strncmp((char*)UserRxBufferFS, "cmdUSB", recvLen) == 0)
+//	  {
+//		  static int len = 0;
+//		  if(isTxBusy == false)
+//		  {
+//			  isTxBusy = true;
+//			  len = snprintf((char*)UserTxBufferFS, sizeof(UserTxBufferFS),"ADC:%u\n",ADC_VAL[2]);
+//		  }
+//		  if(CDC_Transmit_FS(UserTxBufferFS, len) == USBD_OK)
+//		  {
+//			 recvDone = 0;
+//		  }
+//	  }
+//	}
+
+//	  /* Repeatly UART */
+//	  if ((isSent == true) && (Size_Rx != 0))
+//	  {
+//		  HAL_UART_Transmit_DMA(&huart2, bufferRxUART, Size_Rx);
+//		  isSent = false;
+//	  }
+
+//	/* Convert ADC and calc temperature */
+//	  if(ADC_ConvertReady == true)
+//	  {
+//		  ADC_ConvertReady = false;
+//
+//			vref = 3300.0f * (float)*VREFINT_CAL_ADDR / (float)ADC_VAL[0]; 	// read vrefint
+//			voltage = (float)ADC_VAL[1] * vref / 4095.0f; 			// read ADC at temp sensor - Vsense
+//
+//			// Hai điểm hiệu chuẩn, đơn vị mV
+//			float V30  = (float)*TEMPSENSOR_CAL1_ADDR * 3300.0f / 4095.0f;
+//			float V110 = (float)*TEMPSENSOR_CAL2_ADDR * 3300.0f / 4095.0f;
+//
+//			MCU_Temperature = 30.0f + (voltage - V30) * 80.0f / (V110 - V30);
+//			NTC_Temperature = NTC_GetTemperature(ADC_VAL[2]);!
+//
+//			HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_VAL, 3);
+//	  }
+
+//	/* Debug ADC values to serial */
+//	  memset(bufferADC_UART, 0, sizeof(bufferADC_UART));
+//	  snprintf((char*)bufferADC_UART, sizeof(bufferADC_UART),"Vref: %.3f MCU: %.3f NTC: %.3f ,ADC[0]:%u, ADC[1]:%u, ADC[2]:%u \n", vref, MCU_Temperature, NTC_Temperature, ADC_VAL[0], ADC_VAL[1], ADC_VAL[2]);
+//	  HAL_UART_Transmit_DMA(&huart2, bufferADC_UART, strlen((char*)bufferADC_UART));
+
+//	  /* Polling ADC from slave */
+//	  if(Cmd_Reponse == true)
+//	  {
+//		  Cmd_Reponse = false;
+//		  GetTemperature();
+//		  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"Polling OK MCU:%.3f NTC:%.3f\n", Slave_Temperature.MCU_Temperature, Slave_Temperature.NTC_Temperature);
+//		  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
+//	  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -536,34 +596,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  CDC_Transmit_FS((uint8_t*)bufferTxUSB, sizeof(bufferTxUSB));
-//
-//	  if ((isSent == true) && (Size_Rx != 0))
-//	  {
-//		  HAL_UART_Transmit_DMA(&huart2, bufferRxUART, Size_Rx);
-//		  isSent = false;
-//	  }
-
-	  if(ADC_ConvertReady == true)
-	  {
-		  ADC_ConvertReady = false;
-
-			vref = 3300.0f * (float)*VREFINT_CAL_ADDR / (float)ADC_VAL[0]; 	// read vrefint
-			voltage = (float)ADC_VAL[1] * vref / 4095.0f; 			// read ADC at temp sensor - Vsense
-
-			// Hai điểm hiệu chuẩn, đơn vị mV
-			float V30  = (float)*TEMPSENSOR_CAL1_ADDR * 3300.0f / 4095.0f;
-			float V110 = (float)*TEMPSENSOR_CAL2_ADDR * 3300.0f / 4095.0f;
-
-			MCU_Temperature = 30.0f + (voltage - V30) * 80.0f / (V110 - V30);
-			NTC_Temperature = NTC_GetTemperature(ADC_VAL[2]);
-
-			HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_VAL, 3);
-	  }
-
-//	  memset(bufferADC_UART, 0, sizeof(bufferADC_UART));
-//	  snprintf((char*)bufferADC_UART, sizeof(bufferADC_UART),"Vref: %.3f MCU: %.3f NTC: %.3f ,ADC[0]:%u, ADC[1]:%u, ADC[2]:%u \n", vref, MCU_Temperature, NTC_Temperature, ADC_VAL[0], ADC_VAL[1], ADC_VAL[2]);
-//	  HAL_UART_Transmit_DMA(&huart2, bufferADC_UART, strlen((char*)bufferADC_UART));
+	  TestingFunc();
 
 	  if(IscmdIncomming == true)
 	  {
@@ -574,7 +607,6 @@ int main(void)
 		  {
 			  if(strcmp(currentAction,"get") == 0)
 			  {
-//				  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s %ld Cmd OK\n", currentAction, currentParam, g_TempValues);
 				  if(strcmp(currentParam,"temp") == 0)
 				  {
 					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK MCU:%.3f NTC:%.3f\n", currentAction, currentParam, Slave_Temperature.MCU_Temperature, Slave_Temperature.NTC_Temperature);

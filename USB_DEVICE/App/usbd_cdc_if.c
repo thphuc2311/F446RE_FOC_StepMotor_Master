@@ -31,7 +31,9 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
+uint8_t recvDone = 0;
+uint32_t recvLen = 0;
+bool isTxBusy = false;
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -263,6 +265,8 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   /* USER CODE BEGIN 6 */
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  recvDone = 1;
+  recvLen = *Len;
   return (USBD_OK);
   /* USER CODE END 6 */
 }
@@ -311,6 +315,7 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+  isTxBusy = false;
   /* USER CODE END 13 */
   return result;
 }

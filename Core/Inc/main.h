@@ -57,6 +57,7 @@ extern volatile int32_t g_Velocity, g_Position;
 extern volatile bool g_VelocityState, g_PositionState;
 extern volatile int32_t g_TempValues;
 extern volatile bool g_TempState;
+extern volatile bool Cmd_Reponse;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
