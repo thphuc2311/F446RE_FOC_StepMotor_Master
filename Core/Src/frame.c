@@ -11,17 +11,16 @@ void GetTemperature(void);
 typedef struct
 {
 	const char *name;
-	uint8_t type;
 	uint8_t canCmd;
 	void (*request)(void);
 } FrameGetEntry_t;
 
 static const FrameGetEntry_t s_getTable[] =
 {
-	{ "pos",    FRAME_TYPE_POS,    0x23, UpdateAngle      },
-	{ "vel",    FRAME_TYPE_VEL,    0x22, GetVelocity      },
-	{ "curlim", FRAME_TYPE_CURLIM, 0x25, GetCurrentLimit  },
-	{ "temp",   FRAME_TYPE_TEMP,   0x26, GetTemperature   },
+	{ "pos",    0x23, UpdateAngle      },
+	{ "vel",    0x22, GetVelocity      },
+	{ "curlim", 0x25, GetCurrentLimit  },
+	{ "temp",   0x26, GetTemperature   },
 };
 #define GET_TABLE_SIZE	(sizeof(s_getTable) / sizeof(s_getTable[0]))
 
@@ -43,13 +42,15 @@ static bool s_txPending = false;
 static uint8_t s_errFrame[FRAME_LEN];
 static bool s_errPending = false;
 
-static void Frame_QueueError(uint8_t cmd, uint8_t type)
+/*
+ * Queue an error frame to be sent over USB.
+ * Error  only used to notify to PC application when an invalid command is received.
+ * Error frame for slave CAN node not yet implemented.
+ */
+static void Frame_QueueError(void)
 {
 	memset(s_errFrame, 0, sizeof(s_errFrame));
 	s_errFrame[FRAME_IDX_START] = FRAME_ERROR_BYTE;
-	s_errFrame[FRAME_IDX_NODE] = 0;
-	s_errFrame[FRAME_IDX_CMD] = cmd;
-	s_errFrame[FRAME_IDX_TYPE] = type;
 	s_errFrame[FRAME_IDX_DATA] = FRAME_ERROR_FLAG;
 	s_errPending = true;
 }
@@ -64,12 +65,11 @@ uint8_t Frame_Checksum(const uint8_t *frame)
 	return sum;
 }
 
-void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, uint8_t type, const uint8_t *data)
+void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data)
 {
 	frame[FRAME_IDX_START] = FRAME_START_BYTE;
 	frame[FRAME_IDX_NODE] = node;
 	frame[FRAME_IDX_CMD] = cmd;
-	frame[FRAME_IDX_TYPE] = type;
 	memcpy(&frame[FRAME_IDX_DATA], data, FRAME_DATA_LEN);
 	frame[FRAME_IDX_CHECKSUM] = Frame_Checksum(frame);
 }
@@ -103,7 +103,7 @@ void Frame_UsbRxParseCmd(void)
 	if (!tag || !action || !param || !mode || extra ||
 	    strcmp(tag, "USB") != 0 || strcmp(action, "get") != 0)
 	{
-		Frame_QueueError(FRAME_CMD_GET, 0);
+		Frame_QueueError();
 		return;
 	}
 
@@ -127,7 +127,7 @@ void Frame_UsbRxParseCmd(void)
 	}
 	else
 	{
-		Frame_QueueError(FRAME_CMD_GET, 0);
+		Frame_QueueError();
 		return;
 	}
 
@@ -145,7 +145,7 @@ void Frame_UsbRxParseCmd(void)
 		}
 	}
 
-	Frame_QueueError(FRAME_CMD_GET, 0);
+	Frame_QueueError();
 }
 
 void Frame_OnCanResponse(uint8_t node, uint8_t canCmd, const uint8_t *data, uint32_t len)
@@ -198,7 +198,7 @@ void Frame_Task(void)
 	{
 		if (s_respReady)
 		{
-			Frame_Build(s_txFrame, s_respNode, FRAME_CMD_GET, s_entry->type, s_respData);
+			Frame_Build(s_txFrame, s_respNode, s_entry->canCmd, s_respData);
 			s_respReady = false;
 			s_waiting = false;
 			s_tLastFrame = now;
@@ -223,3 +223,16 @@ void Frame_Task(void)
 		s_entry->request();
 	}
 }
+
+// standard data frame
+// [SOF]     [NodeId]    [CMD]   [TypeCmd]   [8 Bytes Data]  [Checksum]
+// [0xA5]    [0x01]      [0x23]  [0x01]      [8 Bytes Data]  [Checksum]
+// [1Byte]   [1Byte]     [1Byte]             [8Bytes]        [2Byte]     = 13 bytes tota
+
+// dynamic data frame
+// [SOF]     [NodeId_1]  [CMD]   [8 Bytes Data]  +    [NodeId_2]  [CMD]   [8 Bytes Data]  [Checksum]
+// [0xA5]    [0x01]      [0x23]  [8 Bytes Data]  +    [0x02]      [0x23]  [8 Bytes Data]  [Checksum]
+// [1Byte]   [1Byte]     [1Byte] [8Bytes]        +    [1Byte]     [1Byte] [8Bytes]        [2Byte]
+// 22 bytes total = 1 byte SOF + 2*(1+1+1+8) + 2 byte checksum
+// number CAN frames in dynamic data frame = (total bytes - 1 byte SOF - 2 byte checksum) / 13 bytes
+
