@@ -1,8 +1,13 @@
 #include "frame.h"
 #include "main.h"
 #include "usbd_cdc_if.h"
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
+void SetPositionSetPoint(int32_t position, bool isAck);
+void SetVelocitySetPoint(int32_t velocity);
+void SetCurrentLimit(int32_t limit, bool store);
 void GetVelocity(void);
 void UpdateAngle(void);
 void GetCurrentLimit(void);
@@ -74,6 +79,39 @@ void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data)
 	frame[FRAME_IDX_CHECKSUM] = Frame_Checksum(frame);
 }
 
+static bool Frame_ExecuteSet(const char *param, const char *value)
+{
+	char *endptr = NULL;
+	errno = 0;
+	long parsed = strtol(value, &endptr, 10);
+
+	if (endptr == value || *endptr != '\0' || errno == ERANGE ||
+	    parsed < INT32_MIN || parsed > INT32_MAX)
+	{
+		return false;
+	}
+
+	int32_t setpoint = (int32_t)parsed;
+	if (strcmp(param, "pos") == 0)
+	{
+		SetPositionSetPoint(setpoint, false);
+	}
+	else if (strcmp(param, "vel") == 0)
+	{
+		SetVelocitySetPoint(setpoint);
+	}
+	else if (strcmp(param, "curlim") == 0)
+	{
+		SetCurrentLimit(setpoint, false);
+	}
+	else
+	{
+		return false;
+	}
+
+	return true;
+}
+
 void Frame_UsbRxParseCmd(void)
 {
 	char line[64];
@@ -87,28 +125,54 @@ void Frame_UsbRxParseCmd(void)
 	len = recvLen;
 	if (len >= sizeof(line))
 	{
-		len = sizeof(line) - 1;
+		recvDone = 0;
+		Frame_QueueError();
+		return;
 	}
 	memcpy(line, UserRxBufferFS, len);
 	line[len] = '\0';
 	recvDone = 0;
 
-	char *saveptr = NULL;
-	char *tag    = strtok_r(line, " \r\n", &saveptr);
-	char *action = strtok_r(NULL, " \r\n", &saveptr);
-	char *param  = strtok_r(NULL, " \r\n", &saveptr);
-	char *mode   = strtok_r(NULL, " \r\n", &saveptr);
-	char *extra  = strtok_r(NULL, " \r\n", &saveptr);
+	/* Reject embedded NUL bytes rather than executing a partial command. */
+	if (memchr(line, '\0', len) != NULL)
+	{
+		Frame_QueueError();
+		return;
+	}
 
-	if (!tag || !action || !param || !mode || extra ||
-	    strcmp(tag, "USB") != 0 || strcmp(action, "get") != 0)
+	char *saveptr = NULL;
+	char *tag      = strtok_r(line, " \t\r\n", &saveptr);
+	char *action   = strtok_r(NULL, " \t\r\n", &saveptr);
+	char *param    = strtok_r(NULL, " \t\r\n", &saveptr);
+	char *argument = strtok_r(NULL, " \t\r\n", &saveptr);
+	char *extra    = strtok_r(NULL, " \t\r\n", &saveptr);
+
+	if (!tag || !action || !param || !argument || extra ||
+	    strcmp(tag, "USB") != 0)
+	{
+		Frame_QueueError();
+		return;
+	}
+
+	if (strcmp(action, "set") == 0)
+	{
+		if (!Frame_ExecuteSet(param, argument))
+		{
+			Frame_QueueError();
+		}
+		/* No USB success frame: CAN submission is not a slave acknowledgment.
+		 * A valid set command leaves an existing get stream running. */
+		return;
+	}
+
+	if (strcmp(action, "get") != 0)
 	{
 		Frame_QueueError();
 		return;
 	}
 
 	/* Stop an active stream. */
-	if (strcmp(mode, "STOP") == 0)
+	if (strcmp(argument, "STOP") == 0)
 	{
 		s_mode = MODE_OFF;
 		s_waiting = false;
@@ -117,11 +181,11 @@ void Frame_UsbRxParseCmd(void)
 	}
 
 	Mode_t newMode;
-	if (strcmp(mode, "1FRAME") == 0)
+	if (strcmp(argument, "1FRAME") == 0)
 	{
 		newMode = MODE_ONCE;
 	}
-	else if (strcmp(mode, "STREAM") == 0)
+	else if (strcmp(argument, "STREAM") == 0)
 	{
 		newMode = MODE_STREAM;
 	}

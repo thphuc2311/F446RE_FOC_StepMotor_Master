@@ -34,7 +34,13 @@ extern "C" {
 uint8_t Frame_Checksum(const uint8_t *frame);
 void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data);
 
-/* Parse USB text command "USB get <pos|vel|curlim|temp> <1FRAME|STREAM>". */
+/* Parse one USB text command per received buffer (maximum 63 bytes):
+ *   USB get <pos|vel|curlim|temp> <1FRAME|STREAM|STOP>
+ *   USB set <pos|vel|curlim> <decimal int32_t>
+ * Set commands preserve any active get stream and do not send a success frame.
+ * Position ACK and current-limit flash storage are disabled.
+ * Invalid commands queue the existing binary error frame.
+ */
 void Frame_UsbRxParseCmd(void);
 /* Issue slave requests and send frames over USB. Call from main loop. */
 void Frame_Task(void);
