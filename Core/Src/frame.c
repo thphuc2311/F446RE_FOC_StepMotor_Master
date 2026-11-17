@@ -31,21 +31,23 @@ static const FrameGetEntry_t s_getTable[] =
 
 typedef enum { MODE_OFF, MODE_ONCE, MODE_STREAM } Mode_t;
 
-static Mode_t s_mode = MODE_OFF;
-static const FrameGetEntry_t *s_entry = NULL;
+static Mode_t send_mode = MODE_OFF;
+static const FrameGetEntry_t *send_entry = NULL;
 static bool s_waiting = false;
 static uint32_t s_tReq = 0;
 static uint32_t s_tLastFrame = 0;
 
 static volatile bool s_respReady = false;
-static uint8_t s_respData[FRAME_DATA_LEN];
-static volatile uint8_t s_respNode = 0;
+static uint8_t RxCANData2usb[FRAME_DATA_LEN];
+static volatile uint8_t NodeID_Info = 0;
 
-static uint8_t s_txFrame[FRAME_LEN];
-static bool s_txPending = false;
+static uint8_t usb_txFrame[FRAME_LEN];
+static bool usb_txPending = false;
 
 static uint8_t s_errFrame[FRAME_LEN];
-static bool s_errPending = false;
+static bool ErrorFrameInOrder_b = false;
+
+static bool OnCANFreshData_b = false;
 
 /*
  * Queue an error frame to be sent over USB.
@@ -57,7 +59,7 @@ static void Frame_QueueError(void)
 	memset(s_errFrame, 0, sizeof(s_errFrame));
 	s_errFrame[FRAME_IDX_START] = FRAME_ERROR_BYTE;
 	s_errFrame[FRAME_IDX_DATA] = FRAME_ERROR_FLAG;
-	s_errPending = true;
+	ErrorFrameInOrder_b = true;
 }
 
 uint8_t Frame_Checksum(const uint8_t *frame)
@@ -174,9 +176,9 @@ void Frame_UsbRxParseCmd(void)
 	/* Stop an active stream. */
 	if (strcmp(argument, "STOP") == 0)
 	{
-		s_mode = MODE_OFF;
-		s_waiting = false;
-		s_respReady = false;
+		send_mode = MODE_OFF;
+		// s_waiting = false;
+		// s_respReady = false;
 		return;
 	}
 
@@ -195,18 +197,51 @@ void Frame_UsbRxParseCmd(void)
 		return;
 	}
 
-	for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
+	// for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
+	// {
+	// 	if (strcmp(param, s_getTable[i].name) == 0)
+	// 	{
+	// 		s_mode = MODE_OFF;
+	// 		s_waiting = false;
+	// 		s_respReady = false;
+	// 		s_entry = &s_getTable[i];
+	// 		s_tLastFrame = HAL_GetTick() - FRAME_STREAM_PERIOD_MS;
+	// 		s_mode = newMode;
+	// 		return;
+	// 	}
+	// }
+
+	if (strcmp(param, s_getTable[0].name) == 0)
 	{
-		if (strcmp(param, s_getTable[i].name) == 0)
-		{
-			s_mode = MODE_OFF;
-			s_waiting = false;
-			s_respReady = false;
-			s_entry = &s_getTable[i];
-			s_tLastFrame = HAL_GetTick() - FRAME_STREAM_PERIOD_MS;
-			s_mode = newMode;
-			return;
-		}
+		send_mode = MODE_OFF;
+		send_entry = &s_getTable[0];
+		send_entry->request();
+		send_mode = newMode;
+		return;
+	}
+	else if (strcmp(param, s_getTable[1].name) == 0)
+	{
+		send_mode = MODE_OFF;
+		send_entry = &s_getTable[1];
+		send_entry->request();
+		send_mode = newMode;
+		return;
+	}
+	else if (strcmp(param, s_getTable[2].name) == 0)
+	{
+		send_mode = MODE_OFF;
+		send_entry = &s_getTable[2];
+		send_entry->request();
+		send_mode = newMode;
+		return;
+	}
+	else if (strcmp(param, s_getTable[3].name) == 0)
+	{
+		send_mode = MODE_OFF;
+		send_entry = &s_getTable[3];
+		send_entry->request();
+		send_mode = newMode;
+		return;
 	}
 
 	Frame_QueueError();
@@ -214,78 +249,107 @@ void Frame_UsbRxParseCmd(void)
 
 void Frame_OnCanResponse(uint8_t node, uint8_t canCmd, const uint8_t *data, uint32_t len)
 {
-	if (!s_waiting || s_respReady || s_entry == NULL || canCmd != s_entry->canCmd)
+	if (/*!s_waiting || s_respReady |*/ send_entry == NULL || canCmd != send_entry->canCmd)
 	{
 		return;
 	}
 
-	memset(s_respData, 0, sizeof(s_respData));
-	memcpy(s_respData, data, (len < FRAME_DATA_LEN) ? len : FRAME_DATA_LEN);
-	s_respNode = node;
-	s_respReady = true;
+	memset(RxCANData2usb, 0, sizeof(RxCANData2usb));
+	memcpy(RxCANData2usb, data, (len < FRAME_DATA_LEN) ? len : FRAME_DATA_LEN);
+	NodeID_Info = node;
+	OnCANFreshData_b = true;
 }
 
 void Frame_Task(void)
 {
-	uint32_t now = HAL_GetTick();
-
-	if (s_errPending)
+	if (ErrorFrameInOrder_b && !isTxBusy) // Process error frame if in order and USB is not busy
 	{
 		if (CDC_Transmit_FS(s_errFrame, FRAME_LEN) == USBD_OK)
 		{
 			isTxBusy = true;
-			s_errPending = false;
+			ErrorFrameInOrder_b = false;
 		}
 		return;
 	}
 
-	if (s_mode == MODE_OFF || s_entry == NULL)
+	if (send_mode == MODE_OFF || send_entry == NULL) // Only proceed one frame at a time, after that return the function
 	{
 		return;
 	}
 
-	if (s_txPending)
+	if (OnCANFreshData_b && !isTxBusy) // Send to USB the fresh CAN data and only if USB is not busy
 	{
-		if (CDC_Transmit_FS(s_txFrame, FRAME_LEN) == USBD_OK)
+		OnCANFreshData_b = false;
+		Frame_Build(usb_txFrame, NodeID_Info, send_entry->canCmd, RxCANData2usb);
+		if (CDC_Transmit_FS(usb_txFrame, FRAME_LEN) == USBD_OK)
 		{
 			isTxBusy = true;
-			s_txPending = false;
-			if (s_mode == MODE_ONCE)
+			if (send_mode == MODE_ONCE)
 			{
-				s_mode = MODE_OFF;
+				send_mode = MODE_OFF;
 			}
 		}
-		return;
 	}
 
-	if (s_waiting)
-	{
-		if (s_respReady)
-		{
-			Frame_Build(s_txFrame, s_respNode, s_entry->canCmd, s_respData);
-			s_respReady = false;
-			s_waiting = false;
-			s_tLastFrame = now;
-			s_txPending = true;
-		}
-		else if ((now - s_tReq) >= FRAME_RESP_TIMEOUT_MS)
-		{
-			s_waiting = false;
-			if (s_mode == MODE_ONCE)
-			{
-				s_mode = MODE_OFF;
-			}
-		}
-		return;
-	}
+	// uint32_t now = HAL_GetTick();
 
-	if (isTxBusy == false && (now - s_tLastFrame) >= FRAME_STREAM_PERIOD_MS)
-	{
-		s_respReady = false;
-		s_waiting = true;
-		s_tReq = now;
-		s_entry->request();
-	}
+	// if (s_errPending)
+	// {
+	// 	if (CDC_Transmit_FS(s_errFrame, FRAME_LEN) == USBD_OK)
+	// 	{
+	// 		isTxBusy = true;
+	// 		s_errPending = false;
+	// 	}
+	// 	return;
+	// }
+
+	// if (s_mode == MODE_OFF || s_entry == NULL)
+	// {
+	// 	return;
+	// }
+
+	// if (s_txPending)
+	// {
+	// 	if (CDC_Transmit_FS(s_txFrame, FRAME_LEN) == USBD_OK)
+	// 	{
+	// 		isTxBusy = true;
+	// 		s_txPending = false;
+	// 		if (s_mode == MODE_ONCE)
+	// 		{
+	// 			s_mode = MODE_OFF;
+	// 		}
+	// 	}
+	// 	return;
+	// }
+
+	// if (s_waiting)
+	// {
+	// 	if (s_respReady)
+	// 	{
+	// 		Frame_Build(s_txFrame, NodeID_Info, s_entry->canCmd, RxCANData2usb);
+	// 		s_respReady = false;
+	// 		s_waiting = false;
+	// 		s_tLastFrame = now;
+	// 		s_txPending = true;
+	// 	}
+	// 	else if ((now - s_tReq) >= FRAME_RESP_TIMEOUT_MS)
+	// 	{
+	// 		s_waiting = false;
+	// 		if (s_mode == MODE_ONCE)
+	// 		{
+	// 			s_mode = MODE_OFF;
+	// 		}
+	// 	}
+	// 	return;
+	// }
+
+	// if (isTxBusy == false && (now - s_tLastFrame) >= FRAME_STREAM_PERIOD_MS)
+	// {
+	// 	s_respReady = false;
+	// 	s_waiting = true;
+	// 	s_tReq = now;
+	// 	s_entry->request();
+	// }
 }
 
 // standard data frame
