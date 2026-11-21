@@ -269,8 +269,8 @@ void Frame_Task(void)
 		return;
 	}
 
-	/* Find next active entry (round-robin from last index) */
-	for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
+	/* Find next active entry (round-robin, skip current first) */
+	for (uint32_t i = 1; i <= GET_TABLE_SIZE; i++)
 	{
 		uint8_t next = (s_streamIndex + i) % GET_TABLE_SIZE;
 		if (s_getTable[next].mode != ENTRY_IDLE)
