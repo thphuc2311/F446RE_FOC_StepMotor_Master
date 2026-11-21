@@ -202,14 +202,7 @@ void Frame_UsbRxParseCmd(void)
 	{
 		if (strcmp(param, s_getTable[i].name) == 0)
 		{
-			IsWaitingRequestCAN = false;
-			send_entry = &s_getTable[i];
-			send_entry->mode = newMode;
-			s_streamIndex = i;
-
-			/* Fire the first CAN request immediately */
-			send_entry->request();
-			IsWaitingRequestCAN = true;
+			s_getTable[i].mode = newMode;
 			return;
 		}
 	}
@@ -249,6 +242,12 @@ void Frame_Task(void)
 		OnCANFreshData_b = false;
 		IsWaitingRequestCAN = false;
 
+		/* Entry was stopped while its request was in flight. */
+		if (send_entry->mode == ENTRY_IDLE)
+		{
+			return;
+		}
+
 		Frame_Build(usb_txFrame, NodeID_Info, send_entry->canCmd, RxCANData2usb);
 		if (CDC_Transmit_FS(usb_txFrame, FRAME_LEN) == USBD_OK)
 		{
@@ -269,14 +268,16 @@ void Frame_Task(void)
 		return;
 	}
 
-	/* Find next active entry (round-robin, skip current first) */
-	for (uint32_t i = 1; i <= GET_TABLE_SIZE; i++)
+	/* s_streamIndex always points at the next candidate, so each entry is served in turn. */
+	for (uint32_t n = 0; n < GET_TABLE_SIZE; n++)
 	{
-		uint8_t next = (s_streamIndex + i) % GET_TABLE_SIZE;
-		if (s_getTable[next].mode != ENTRY_IDLE)
+		FrameGetEntry_t *entry = &s_getTable[s_streamIndex];
+		if (++s_streamIndex >= GET_TABLE_SIZE)
+			s_streamIndex = 0;
+
+		if (entry->mode != ENTRY_IDLE)
 		{
-			s_streamIndex = next;
-			send_entry = &s_getTable[next];
+			send_entry = entry;
 			send_entry->request();
 			IsWaitingRequestCAN = true;
 			return;
