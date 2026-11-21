@@ -31,6 +31,12 @@ extern "C" {
 #define FRAME_STREAM_PERIOD_MS	10u
 #define FRAME_RESP_TIMEOUT_MS	100u
 
+typedef enum {
+	ENTRY_IDLE,
+	ENTRY_ONCE,
+	ENTRY_STREAM,
+} HandleMode_t;
+
 uint8_t Frame_Checksum(const uint8_t *frame);
 void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data);
 
