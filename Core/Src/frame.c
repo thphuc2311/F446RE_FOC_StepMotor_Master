@@ -76,7 +76,7 @@ void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data)
 	frame[FRAME_IDX_CHECKSUM] = Frame_Checksum(frame);
 }
 
-static bool Frame_ExecuteSet(const char *param, const char *value)
+static bool Frame_ExecuteSet(uint8_t canCmd, const char *value)
 {
 	char *endptr = NULL;
 	errno = 0;
@@ -89,23 +89,13 @@ static bool Frame_ExecuteSet(const char *param, const char *value)
 	}
 
 	int32_t setpoint = (int32_t)parsed;
-	if (strcmp(param, "pos") == 0)
+	switch (canCmd)
 	{
-		SetPositionSetPoint(setpoint, false);
+		case 0x23: SetPositionSetPoint(setpoint, false); break;
+		case 0x22: SetVelocitySetPoint(setpoint);       break;
+		case 0x25: SetCurrentLimit(setpoint, false);     break;
+		default:   return false;
 	}
-	else if (strcmp(param, "vel") == 0)
-	{
-		SetVelocitySetPoint(setpoint);
-	}
-	else if (strcmp(param, "curlim") == 0)
-	{
-		SetCurrentLimit(setpoint, false);
-	}
-	else
-	{
-		return false;
-	}
-
 	return true;
 }
 
@@ -153,12 +143,18 @@ void Frame_UsbRxParseCmd(void)
 
 	if (strcmp(action, "set") == 0)
 	{
-		if (!Frame_ExecuteSet(param, argument))
+		/* Parse param as hex CAN command, e.g. "0x23" */
+		char *endptr = NULL;
+		long cmd = strtol(param, &endptr, 16);
+		if (endptr == param || *endptr != '\0' || cmd < 0 || cmd > 0xFF)
+		{
+			Frame_QueueError();
+			return;
+		}
+		if (!Frame_ExecuteSet((uint8_t)cmd, argument))
 		{
 			Frame_QueueError();
 		}
-		/* No USB success frame: CAN submission is not a slave acknowledgment.
-		 * A valid set command leaves an existing get stream running. */
 		return;
 	}
 
@@ -168,12 +164,22 @@ void Frame_UsbRxParseCmd(void)
 		return;
 	}
 
+	/* Parse param as hex CAN command, e.g. "0x23" */
+	char *endptr = NULL;
+	long cmd = strtol(param, &endptr, 16);
+	if (endptr == param || *endptr != '\0' || cmd < 0 || cmd > 0xFF)
+	{
+		Frame_QueueError();
+		return;
+	}
+	uint8_t canCmd = (uint8_t)cmd;
+
 	/* Stop streaming for the specified entry only. */
 	if (strcmp(argument, "STOP") == 0)
 	{
 		for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
 		{
-			if (strcmp(param, s_getTable[i].name) == 0)
+			if (canCmd == s_getTable[i].canCmd)
 			{
 				s_getTable[i].mode = ENTRY_IDLE;
 				break;
@@ -200,7 +206,7 @@ void Frame_UsbRxParseCmd(void)
 
 	for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
 	{
-		if (strcmp(param, s_getTable[i].name) == 0)
+		if (canCmd == s_getTable[i].canCmd)
 		{
 			s_getTable[i].mode = newMode;
 			return;

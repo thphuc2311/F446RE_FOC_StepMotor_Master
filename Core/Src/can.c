@@ -27,6 +27,8 @@ CAN_RxHeaderTypeDef RxHeader;
 uint8_t TxData[8];
 uint8_t RxData[8];
 uint32_t TxMailbox;
+
+extern volatile bool IsFreshDataCAN4UART_b;
 /* USER CODE END 0 */
 
 CAN_HandleTypeDef hcan1;
@@ -182,6 +184,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* CanHandle)
     {
     	OnCanCmdResponded(cmd, RxData, RxHeader.DLC);
     	Frame_OnCanResponse(id, cmd, RxData, RxHeader.DLC);
+      /* Notify UART handler that fresh CAN data is available */
+      IsFreshDataCAN4UART_b = true;
     }
 }
 
