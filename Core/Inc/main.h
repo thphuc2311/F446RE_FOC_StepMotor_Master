@@ -120,8 +120,14 @@ extern void SetDceKi(int32_t _ki, bool _store);
 /* 0x1A – Set DCE Kd and Store to Flash */
 extern void SetDceKd(int32_t _kd, bool _store);
 
-/* 0x1C – Set PID gains (kp, ki, kd) and Store to Flash */
-extern void SetPidGains(int16_t _kp, int16_t _ki, int16_t _kd, bool _store);
+/* 0x1C – Set PID Kp and Store to Flash */
+extern void SetPidKp(int16_t _kp, bool _store);
+
+/* 0x1D – Set PID Ki and Store to Flash */
+extern void SetPidKi(int16_t _ki, bool _store);
+
+/* 0x1E – Set PID Kd and Store to Flash */
+extern void SetPidKd(int16_t _kd, bool _store);
 
 /* 0x21 – Get Current (slave responds with current + state) */
 extern void GetCurrent();

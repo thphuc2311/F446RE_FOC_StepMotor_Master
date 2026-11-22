@@ -313,9 +313,9 @@ void Frame_Task(void)
 }
 
 // standard data frame
-// [SOF]     [NodeId]    [CMD]   [TypeCmd]   [8 Bytes Data]  [Checksum]
-// [0xA5]    [0x01]      [0x23]  [0x01]      [8 Bytes Data]  [Checksum]
-// [1Byte]   [1Byte]     [1Byte]             [8Bytes]        [2Byte]     = 13 bytes tota
+// [SOF]     [NodeId]    [CMD]   [8 Bytes Data]  [Checksum]
+// [0xA5]    [0x01]      [0x23]  [8 Bytes Data]  [Checksum]
+// [1Byte]   [1Byte]     [1Byte] [8Bytes]        [2Byte]     = 13 bytes total
 
 // dynamic data frame
 // [SOF]     [NodeId_1]  [CMD]   [8 Bytes Data]  +    [NodeId_2]  [CMD]   [8 Bytes Data]  [Checksum]

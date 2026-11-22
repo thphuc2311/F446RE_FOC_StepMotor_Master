@@ -265,14 +265,30 @@ void SetDceKd(int32_t _kd, bool _store)
 	CAN_Send(&TxHeader, TxData);
 }
 
-/* 0x1C – Set PID gains (kp, ki, kd) and Store to Flash */
-void SetPidGains(int16_t _kp, int16_t _ki, int16_t _kd, bool _store)
+/* 0x1C – Set PID Kp and Store to Flash */
+void SetPidKp(int16_t _kp, bool _store)
 {
 	TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x1C;
-	memcpy(TxData,     &_kp, sizeof(int16_t));
-	memcpy(TxData + 2, &_ki, sizeof(int16_t));
-	memcpy(TxData + 4, &_kd, sizeof(int16_t));
-	TxData[6] = _store ? 1u : 0u;
+	memcpy(TxData, &_kp, sizeof(int16_t));
+	TxData[4] = _store ? 1u : 0u;
+	CAN_Send(&TxHeader, TxData);
+}
+
+/* 0x1D – Set PID Ki and Store to Flash */
+void SetPidKi(int16_t _ki, bool _store)
+{
+	TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x1D;
+	memcpy(TxData, &_ki, sizeof(int16_t));
+	TxData[4] = _store ? 1u : 0u;
+	CAN_Send(&TxHeader, TxData);
+}
+
+/* 0x1E – Set PID Kd and Store to Flash */
+void SetPidKd(int16_t _kd, bool _store)
+{
+	TxHeader.StdId = (TargetCAN_NodeId << 7) | 0x1E;
+	memcpy(TxData, &_kd, sizeof(int16_t));
+	TxData[4] = _store ? 1u : 0u;
 	CAN_Send(&TxHeader, TxData);
 }
 
