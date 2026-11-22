@@ -67,9 +67,6 @@ volatile bool isSent = false;
 volatile bool IscmdIncomming = false;
 volatile uint16_t Size_Rx = 0;
 
-/* UART-to-CAN handshake: wait for slave response before printing */
-volatile bool IsFreshDataCAN4UART_b = false;
-
 uint8_t bufferTxUART[MAX_BUFFER_SIZE] = "hello world UART\n";
 uint8_t bufferRxUART[MAX_BUFFER_SIZE];
 uint8_t bufferRxCmd[MAX_BUFFER_SIZE];
@@ -411,12 +408,14 @@ float NTC_GetTemperature(uint16_t adc_raw)
 bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
 {
 	char *saveptr = NULL;
-	char *action = strtok_r(cmd,  " \r\n", &saveptr);
-	char *param  = strtok_r(NULL, " \r\n", &saveptr);
-	char *value  = strtok_r(NULL, " \r\n", &saveptr);
-	char *extra  = strtok_r(NULL, " \r\n", &saveptr);
+	char *action = strtok_r(cmd,  " \r\n", &saveptr); // set
+//	char *group  = strtok_r(NULL, " \r\n", &saveptr); // position
+	char *param  = strtok_r(NULL, " \r\n", &saveptr); // pos
+	char *value  = strtok_r(NULL, " \r\n", &saveptr); // 10
+	char *extra  = strtok_r(NULL, " \r\n", &saveptr); // junk
 
-	if(!action || !param || extra)
+	// 4 important token
+	if(!action /*||!group*/ ||!param /*||!value*/ ||extra)
 	{
 		return false;
 	}
@@ -424,17 +423,19 @@ bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
 	*_currentAction = action;
 	*_currentParam = param;
 
-	if(strcmp(action, "set") == 0)
+	if((strcmp(action, "set") == 0) && (*value != 0))
 	{
-		if(!value) return false;
+		// convert string to numeric values
 		char *endptr = NULL;
 		long val = strtol(value, &endptr, 10);
-		if(endptr == value || *endptr != '\0')
+
+		// ignoring non numeric or redundant character
+		if(endptr == value || *endptr != '\0' /*|| !isfinite(val)*/)
 		{
 			return false;
 		}
 
-		if(strcmp(param, "pos") == 0)
+		if(strcmp(param, "pos") == 0) // 0x05 – Set Position SetPoint
 		{
 			SetPositionSetPoint((int32_t)val, 0);
 		}
@@ -444,7 +445,7 @@ bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
 		}
 		else if(strcmp(param, "curlim") == 0)
 		{
-			SetCurrentLimit((int32_t)val, 0);
+			SetCurrentLimit((int32_t)val,0);
 		}
 		else
 		{
@@ -453,22 +454,19 @@ bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
 	}
 	else if(strcmp(action, "get") == 0)
 	{
-		/* Send CAN request, wait for response in main loop */
-		IsFreshDataCAN4UART_b = false;
-
-		if(strcmp(param, "vel") == 0)
+		if(strcmp(param, "vel") == 0) // 0x22 – Get Velocity
 		{
 			GetVelocity();
 		}
-		else if(strcmp(param, "pos") == 0)
+		else if(strcmp(param, "pos") == 0) // 0x23 – Get Angle
 		{
 			UpdateAngle();
 		}
-		else if(strcmp(param, "curlim") == 0)
+		else if(strcmp(param, "curlim") == 0) // 0x25 – Get Current-Limit
 		{
 			GetCurrentLimit();
 		}
-		else if(strcmp(param, "temp") == 0)
+		else if(strcmp(param, "temp") == 0) // 0x25 – Get Current-Limit
 		{
 			GetTemperature();
 		}
@@ -613,14 +611,6 @@ int main(void)
 		  {
 			  if(strcmp(currentAction,"get") == 0)
 			  {
-				  /* Wait for CAN response before printing */
-				  if(!IsFreshDataCAN4UART_b)
-				  {
-					  IscmdIncomming = true;
-					  continue;
-				  }
-				  IsFreshDataCAN4UART_b = false;
-
 				  if(strcmp(currentParam,"temp") == 0)
 				  {
 					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK MCU:%.3f NTC:%.3f\n", currentAction, currentParam, Slave_Temperature.MCU_Temperature, Slave_Temperature.NTC_Temperature);
