@@ -5,14 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void SetPositionSetPoint(int32_t position, bool isAck);
-void SetVelocitySetPoint(int32_t velocity);
-void SetCurrentLimit(int32_t limit, bool store);
-void GetVelocity(void);
-void UpdateAngle(void);
-void GetCurrentLimit(void);
-void GetTemperature(void);
-
 typedef struct
 {
 	const char *name;
@@ -21,14 +13,31 @@ typedef struct
 	HandleMode_t mode;
 } FrameGetEntry_t;
 
-static FrameGetEntry_t s_getTable[] =
+typedef struct
+{
+	const char   *name;
+	uint8_t       canCmd;
+	const uint8_t numparam;
+} FrameSetEntry_t;
+
+static FrameGetEntry_t USB_GetTable[] =
 {
 	{ "pos",    0x23, UpdateAngle,     ENTRY_IDLE },
 	{ "vel",    0x22, GetVelocity,     ENTRY_IDLE },
 	{ "curlim", 0x25, GetCurrentLimit, ENTRY_IDLE },
 	{ "temp",   0x26, GetTemperature,  ENTRY_IDLE },
 };
-#define GET_TABLE_SIZE	(sizeof(s_getTable) / sizeof(s_getTable[0]))
+#define GET_TABLE_SIZE	(sizeof(USB_GetTable) / sizeof(USB_GetTable[0]))
+
+static FrameSetEntry_t USB_SetTable[] =
+{
+	{ "cur",    	0x03, 1 }, // SetCurrentSetPoint
+	{ "vel",    	0x04, 1 }, // SetVelocitySetPoint
+	{ "pos", 		0x05, 2 }, // SetPositionSetPoint
+	{ "postime",	0x06, 2 }, // SetPositionSetPointWithTime
+	{ "curlim", 	0x12, 2 }, // SetCurrentLimit
+};
+#define SET_TABLE_SIZE	(sizeof(USB_SetTable) / sizeof(USB_SetTable[0]))
 
 static FrameGetEntry_t *send_entry = NULL;
 static bool IsWaitingRequestCAN = false;       /* true while waiting for CAN response */
@@ -78,34 +87,52 @@ void Frame_Build(uint8_t *frame, uint8_t node, uint8_t cmd, const uint8_t *data)
 
 static bool Frame_ExecuteSet(const char *param, const char *value)
 {
-	char *endptr = NULL;
-	errno = 0;
-	long parsed = strtol(value, &endptr, 10);
-
-	if (endptr == value || *endptr != '\0' || errno == ERANGE ||
-	    parsed < INT32_MIN || parsed > INT32_MAX)
+	/* Find matching entry by name */
+	const FrameSetEntry_t *entry = NULL;
+	for (uint32_t i = 0; i < SET_TABLE_SIZE; i++)
 	{
+		if (strcmp(param, USB_SetTable[i].name) == 0)
+		{
+			entry = &USB_SetTable[i];
+			break;
+		}
+	}
+	if (!entry)
 		return false;
+
+	/* Parse params: comma-separated, e.g. "1000,1" or "1000" */
+	int32_t params[2] = {0};
+	uint8_t numParsed = 0;
+	char buf[64];
+	strncpy(buf, value, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
+
+	char *saveptr = NULL;
+	char *tok = strtok_r(buf, ",", &saveptr);
+	while (tok && numParsed < entry->numparam)
+	{
+		errno = 0;
+		char *endptr = NULL;
+		long v = strtol(tok, &endptr, 10);
+		if (endptr == tok || *endptr != '\0' || errno == ERANGE)
+			return false;
+		params[numParsed++] = (int32_t)v;
+		tok = strtok_r(NULL, ",", &saveptr);
 	}
 
-	int32_t setpoint = (int32_t)parsed;
-	if (strcmp(param, "pos") == 0)
-	{
-		SetPositionSetPoint(setpoint, false);
-	}
-	else if (strcmp(param, "vel") == 0)
-	{
-		SetVelocitySetPoint(setpoint);
-	}
-	else if (strcmp(param, "curlim") == 0)
-	{
-		SetCurrentLimit(setpoint, false);
-	}
-	else
-	{
+	if (numParsed != entry->numparam)
 		return false;
-	}
 
+	/* Dispatch directly — no wrapper, no function pointer */
+	switch (entry->canCmd)
+	{
+		case 0x03:  SetCurrentSetPoint(params[0]);                          break;
+		case 0x04:  SetVelocitySetPoint(params[0]);                       break;
+		case 0x05:  SetPositionSetPoint(params[0], (bool)params[1]);      break;
+		case 0x06:  SetPositionSetPointWithTime(params[0], (float)params[1]); break;
+		case 0x12:  SetCurrentLimit(params[0], (bool)params[1]);           break;
+		default:    return false;
+	}
 	return true;
 }
 
@@ -173,9 +200,9 @@ void Frame_UsbRxParseCmd(void)
 	{
 		for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
 		{
-			if (strcmp(param, s_getTable[i].name) == 0)
+			if (strcmp(param, USB_GetTable[i].name) == 0)
 			{
-				s_getTable[i].mode = ENTRY_IDLE;
+				USB_GetTable[i].mode = ENTRY_IDLE;
 				break;
 			}
 		}
@@ -200,9 +227,9 @@ void Frame_UsbRxParseCmd(void)
 
 	for (uint32_t i = 0; i < GET_TABLE_SIZE; i++)
 	{
-		if (strcmp(param, s_getTable[i].name) == 0)
+		if (strcmp(param, USB_GetTable[i].name) == 0)
 		{
-			s_getTable[i].mode = newMode;
+			USB_GetTable[i].mode = newMode;
 			return;
 		}
 	}
@@ -271,7 +298,7 @@ void Frame_Task(void)
 	/* s_streamIndex always points at the next candidate, so each entry is served in turn. */
 	for (uint32_t n = 0; n < GET_TABLE_SIZE; n++)
 	{
-		FrameGetEntry_t *entry = &s_getTable[s_streamIndex];
+		FrameGetEntry_t *entry = &USB_GetTable[s_streamIndex];
 		if (++s_streamIndex >= GET_TABLE_SIZE)
 			s_streamIndex = 0;
 

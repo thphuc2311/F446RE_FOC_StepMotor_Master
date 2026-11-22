@@ -633,7 +633,7 @@ int main(void)
 			  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
 		  }
 	  }
-
+	  HAL_Delay(10);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

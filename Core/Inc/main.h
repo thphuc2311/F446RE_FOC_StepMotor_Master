@@ -75,6 +75,81 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+/* 0x02 – Do Calibration */
+extern void DoCalibration(bool _ack);
+
+/* 0x03 – Set Current SetPoint [mA] */
+extern void SetCurrentSetPoint(int32_t _cur);
+
+/* 0x04 – Set Velocity SetPoint [steps/sec] */
+void SetVelocitySetPoint(int32_t _vel);
+
+/* 0x05 – Set Position SetPoint */
+extern void SetPositionSetPoint(int32_t _pos, bool _isAck);
+
+/* 0x06 – Set Position SetPoint with Time */
+extern void SetPositionSetPointWithTime(int32_t _pos, float _time);
+
+/* 0x07 – Set Position SetPoint with Velocity Limit */
+extern void SetPositionWithVelocityLimit(int32_t _pos, int32_t _vel);
+
+/* 0x11 – Set Node-ID and Store to Flash */
+extern void SetNodeId(uint32_t _nodeId, bool _store);
+
+/* 0x12 – Set Current-Limit and Store to Flash */
+extern void SetCurrentLimit(int32_t _limit, bool _store);
+
+/* 0x13 – Set Velocity-Limit and Store to Flash */
+extern void SetVelocityLimit(int32_t _limit, bool _store);
+
+/* 0x14 – Set Acceleration and Store to Flash */
+extern void SetAcceleration(int32_t _acc, bool _store);
+
+/* 0x15 – Apply Home-Position and Store to Flash */
+extern void SetHomePosition(int32_t _offset, bool _store);
+
+/* 0x17 – Set DCE Kp and Store to Flash */
+extern void SetDceKp(int32_t _kp, bool _store);
+
+/* 0x18 – Set DCE Kv and Store to Flash */
+extern void SetDceKv(int32_t _kv, bool _store);
+
+/* 0x19 – Set DCE Ki and Store to Flash */
+extern void SetDceKi(int32_t _ki, bool _store);
+
+/* 0x1A – Set DCE Kd and Store to Flash */
+extern void SetDceKd(int32_t _kd, bool _store);
+
+/* 0x1C – Set PID gains (kp, ki, kd) and Store to Flash */
+extern void SetPidGains(int16_t _kp, int16_t _ki, int16_t _kd, bool _store);
+
+/* 0x21 – Get Current (slave responds with current + state) */
+extern void GetCurrent();
+
+/* 0x22 – Get Velocity (slave responds with velocity + state) */
+extern void GetVelocity();
+
+/* 0x23 – Get Angle (slave responds with angle + state) */
+extern void UpdateAngle();
+
+/* 0x24 – Get Offset (slave responds with encoderHomeOffset) */
+extern void GetOffset();
+
+/* 0x25 – Get Current-Limit of slave */
+extern void GetCurrentLimit();
+
+/* 0x26 – Get MCU & NTC temperature of slave */
+extern void GetTemperature();
+
+/* 0x7D – Undo Configs (restore to current in-flash config & reboot) */
+extern void UndoConfigs();
+
+/* 0x7E – Default Configs (back to default config & reboot) */
+extern void DefaultConfigs();
+
+/* 0x7F – Reboot slave */
+extern void RebootSlave();
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
