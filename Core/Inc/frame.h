@@ -53,6 +53,15 @@ void Frame_Task(void);
 /* Call from OnCanCmdResponded() with the responding node and raw slave payload. */
 void Frame_OnCanResponse(uint8_t node, uint8_t canCmd, const uint8_t *data, uint32_t len);
 
+/* Parse one UART text command (1-shot: 1 request → 1 response, no streaming).
+ *   get <pos|vel|curlim|temp>
+ *   set <cur|vel|pos|postime|curlim|pidkp|pidki|pidkd> <val[,val]>
+ * Invalid format → "Cmd NOK" reply over UART.
+ */
+bool Frame_UartParseCmd(char *line);
+/* Service UART CAN-response waiting. Call from main loop. */
+void Frame_UartTask(void);
+
 #ifdef __cplusplus
 }
 #endif

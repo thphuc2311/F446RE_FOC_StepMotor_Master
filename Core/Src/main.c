@@ -421,84 +421,6 @@ float NTC_GetTemperature(uint16_t adc_raw)
     return -999.0f;
 }
 
-bool ParseCommand(char *cmd, char **_currentAction, char **_currentParam)
-{
-	char *saveptr = NULL;
-	char *action = strtok_r(cmd,  " \r\n", &saveptr); // set
-//	char *group  = strtok_r(NULL, " \r\n", &saveptr); // position
-	char *param  = strtok_r(NULL, " \r\n", &saveptr); // pos
-	char *value  = strtok_r(NULL, " \r\n", &saveptr); // 10
-	char *extra  = strtok_r(NULL, " \r\n", &saveptr); // junk
-
-	// 4 important token
-	if(!action /*||!group*/ ||!param /*||!value*/ ||extra)
-	{
-		return false;
-	}
-
-	*_currentAction = action;
-	*_currentParam = param;
-
-	if((strcmp(action, "set") == 0) && (*value != 0))
-	{
-		// convert string to numeric values
-		char *endptr = NULL;
-		long val = strtol(value, &endptr, 10);
-
-		// ignoring non numeric or redundant character
-		if(endptr == value || *endptr != '\0' /*|| !isfinite(val)*/)
-		{
-			return false;
-		}
-
-		if(strcmp(param, "pos") == 0) // 0x05 – Set Position SetPoint
-		{
-			SetPositionSetPoint((int32_t)val, 0);
-		}
-		else if(strcmp(param, "vel") == 0)
-		{
-			SetVelocitySetPoint((int32_t)val);
-		}
-		else if(strcmp(param, "curlim") == 0)
-		{
-			SetCurrentLimit((int32_t)val,0);
-		}
-		else
-		{
-			return false;
-		}
-	}
-	else if(strcmp(action, "get") == 0)
-	{
-		if(strcmp(param, "vel") == 0) // 0x22 – Get Velocity
-		{
-			GetVelocity();
-		}
-		else if(strcmp(param, "pos") == 0) // 0x23 – Get Angle
-		{
-			UpdateAngle();
-		}
-		else if(strcmp(param, "curlim") == 0) // 0x25 – Get Current-Limit
-		{
-			GetCurrentLimit();
-		}
-		else if(strcmp(param, "temp") == 0) // 0x25 – Get Current-Limit
-		{
-			GetTemperature();
-		}
-		else
-		{
-			return false;
-		}
-	}
-	else
-	{
-		return false;
-	}
-
-	return true;
-}
-
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
 	if(hadc->Instance == ADC1)
@@ -617,37 +539,19 @@ int main(void)
 
 	  Frame_UsbRxParseCmd();
 	  Frame_Task();
+	  Frame_UartTask();
 
 	  if(IscmdIncomming == true)
 	  {
 		  IscmdIncomming = false;
-		  char *currentAction = NULL, *currentParam = NULL;
 
-		  if(ParseCommand((char*)bufferRxCmd, &currentAction, &currentParam) == true)
-		  {
-			  if(strcmp(currentAction,"get") == 0)
-			  {
-				  if(strcmp(currentParam,"temp") == 0)
-				  {
-					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK MCU:%.3f NTC:%.3f\n", currentAction, currentParam, Slave_Temperature.MCU_Temperature, Slave_Temperature.NTC_Temperature);
-				  }
-				  else
-				  {
-					  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s %ld Cmd OK\n", currentAction, currentParam, g_TempValues);
-				  }
-			  }
-			  else
-			  {
-				  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"%s %s Cmd OK\n", currentAction, currentParam);
-			  }
-
-			  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
-		  }
-		  else
+		  if(!Frame_UartParseCmd((char*)bufferRxCmd))
 		  {
 			  snprintf((char*)bufferTxUART, sizeof(bufferTxUART),"Cmd NOK\n");
 			  HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char*)bufferTxUART));
 		  }
+		  /* set: no immediate reply (CAN submission is not ack).
+		   * get: reply sent by Frame_UartTask() when CAN response arrives. */
 	  }
 	  HAL_Delay(10);
     /* USER CODE END WHILE */

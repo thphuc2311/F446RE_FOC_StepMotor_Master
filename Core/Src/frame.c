@@ -39,6 +39,33 @@ static FrameSetEntry_t USB_SetTable[] =
 };
 #define SET_TABLE_SIZE	(sizeof(USB_SetTable) / sizeof(USB_SetTable[0]))
 
+/* --- UART tables (1-shot: 1 request → 1 response, no streaming) --- */
+static FrameGetEntry_t UART_GetTable[] =
+{
+	{ "pos",    0x23, UpdateAngle,     ENTRY_IDLE },
+	{ "vel",    0x22, GetVelocity,     ENTRY_IDLE },
+	{ "curlim", 0x25, GetCurrentLimit, ENTRY_IDLE },
+	{ "temp",   0x26, GetTemperature,  ENTRY_IDLE },
+};
+#define UART_GET_TABLE_SIZE  (sizeof(UART_GetTable) / sizeof(UART_GetTable[0]))
+
+static FrameSetEntry_t UART_SetTable[] =
+{
+	{ "cur",     	0x03, 1 }, // SetCurrentSetPoint
+	{ "vel",     	0x04, 1 }, // SetVelocitySetPoint
+	{ "pos", 		0x05, 2 }, // SetPositionSetPoint
+	{ "postime",	0x06, 2 }, // SetPositionSetPointWithTime
+	{ "curlim", 	0x12, 2 }, // SetCurrentLimit
+};
+#define UART_SET_TABLE_SIZE  (sizeof(UART_SetTable) / sizeof(UART_SetTable[0]))
+
+/* UART 1-shot state */
+static FrameGetEntry_t *uart_send_entry = NULL;
+static bool uart_waitingCAN = false;
+static uint8_t uart_RxCANData[FRAME_DATA_LEN];
+static volatile uint8_t uart_NodeID = 0;
+static volatile bool uart_CANFreshData = false;
+
 static FrameGetEntry_t *send_entry = NULL;
 static bool IsWaitingRequestCAN = false;       /* true while waiting for CAN response */
 static uint8_t s_streamIndex = 0;    /* round-robin index for MODE_STREAM */
@@ -239,15 +266,22 @@ void Frame_UsbRxParseCmd(void)
 
 void Frame_OnCanResponse(uint8_t node, uint8_t canCmd, const uint8_t *data, uint32_t len)
 {
-	if (!IsWaitingRequestCAN || send_entry == NULL || canCmd != send_entry->canCmd)
+	if (IsWaitingRequestCAN && send_entry != NULL && canCmd == send_entry->canCmd)
 	{
-		return;
+		memset(RxCANData2usb, 0, sizeof(RxCANData2usb));
+		memcpy(RxCANData2usb, data, (len < FRAME_DATA_LEN) ? len : FRAME_DATA_LEN);
+		NodeID_Info = node;
+		OnCANFreshData_b = true;
 	}
 
-	memset(RxCANData2usb, 0, sizeof(RxCANData2usb));
-	memcpy(RxCANData2usb, data, (len < FRAME_DATA_LEN) ? len : FRAME_DATA_LEN);
-	NodeID_Info = node;
-	OnCANFreshData_b = true;
+	/* UART 1-shot response */
+	if (uart_waitingCAN && uart_send_entry != NULL && canCmd == uart_send_entry->canCmd)
+	{
+		memset(uart_RxCANData, 0, sizeof(uart_RxCANData));
+		memcpy(uart_RxCANData, data, (len < FRAME_DATA_LEN) ? len : FRAME_DATA_LEN);
+		uart_NodeID = node;
+		uart_CANFreshData = true;
+	}
 }
 
 void Frame_Task(void)
@@ -310,6 +344,140 @@ void Frame_Task(void)
 			return;
 		}
 	}
+}
+
+/* ------------------------------------------------------------------ */
+/*  UART command parser — 1-shot: 1 request → 1 response, no stream   */
+/* ------------------------------------------------------------------ */
+
+static bool Uart_ExecuteSet(const char *param, const char *value)
+{
+	const FrameSetEntry_t *entry = NULL;
+	for (uint32_t i = 0; i < UART_SET_TABLE_SIZE; i++)
+	{
+		if (strcmp(param, UART_SetTable[i].name) == 0)
+		{
+			entry = &UART_SetTable[i];
+			break;
+		}
+	}
+	if (!entry)
+		return false;
+
+	int32_t params[2] = {0};
+	uint8_t numParsed = 0;
+	char buf[64];
+	strncpy(buf, value, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
+
+	char *saveptr = NULL;
+	char *tok = strtok_r(buf, ",", &saveptr);
+	while (tok && numParsed < entry->numparam)
+	{
+		errno = 0;
+		char *endptr = NULL;
+		long v = strtol(tok, &endptr, 10);
+		if (endptr == tok || *endptr != '\0' || errno == ERANGE)
+			return false;
+		params[numParsed++] = (int32_t)v;
+		tok = strtok_r(NULL, ",", &saveptr);
+	}
+	if (numParsed != entry->numparam)
+		return false;
+
+	switch (entry->canCmd)
+	{
+		case 0x03:  SetCurrentSetPoint(params[0]);                          break;
+		case 0x04:  SetVelocitySetPoint(params[0]);                       break;
+		case 0x05:  SetPositionSetPoint(params[0], (bool)params[1]);      break;
+		case 0x06:  SetPositionSetPointWithTime(params[0], (float)params[1]); break;
+		case 0x12:  SetCurrentLimit(params[0], (bool)params[1]);           break;
+		default:    return false;
+	}
+	return true;
+}
+
+static bool Uart_ExecuteGet(const char *param)
+{
+	for (uint32_t i = 0; i < UART_GET_TABLE_SIZE; i++)
+	{
+		if (strcmp(param, UART_GetTable[i].name) == 0)
+		{
+			uart_send_entry = &UART_GetTable[i];
+			uart_send_entry->request();
+			uart_waitingCAN = true;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool Frame_UartParseCmd(char *line)
+{
+	char *saveptr = NULL;
+	char *action = strtok_r(line, " \t\r\n", &saveptr);
+	char *param  = strtok_r(NULL, " \t\r\n", &saveptr);
+	char *value  = strtok_r(NULL, "\r\n", &saveptr);  /* rest of line = value */
+	char *extra  = value ? strtok_r(NULL, "\r\n", &saveptr) : NULL;
+
+	if (!action || !param || extra)
+		return false;
+
+	/* trim trailing whitespace from value */
+	if (value)
+	{
+		size_t vlen = strlen(value);
+		while (vlen > 0 && (value[vlen-1] == ' ' || value[vlen-1] == '\t'))
+			value[--vlen] = '\0';
+	}
+
+	if (strcmp(action, "set") == 0)
+	{
+		if (!value || !Uart_ExecuteSet(param, value))
+			return false;
+		return true;
+	}
+
+	if (strcmp(action, "get") == 0)
+	{
+		if (!Uart_ExecuteGet(param))
+			return false;
+		return true;
+	}
+
+	return false;
+}
+
+void Frame_UartTask(void)
+{
+	if (!uart_CANFreshData || !uart_waitingCAN)
+		return;
+
+	uart_CANFreshData = false;
+	uart_waitingCAN = false;
+
+	/* Format response over UART */
+	if (uart_send_entry->canCmd == 0x26)
+	{
+		/* Temperature: 2 floats */
+		float mcu, ntc;
+		memcpy(&mcu, uart_RxCANData, sizeof(float));
+		memcpy(&ntc, uart_RxCANData + 4, sizeof(float));
+		snprintf((char *)bufferTxUART, MAX_BUFFER_SIZE,
+			"get %s Cmd OK MCU:%.3f NTC:%.3f\n",
+			uart_send_entry->name, mcu, ntc);
+	}
+	else
+	{
+		/* Generic: 1 int32 + state byte */
+		int32_t val = 0;
+		memcpy(&val, uart_RxCANData, sizeof(int32_t));
+		snprintf((char *)bufferTxUART, MAX_BUFFER_SIZE,
+			"get %s %ld Cmd OK\n",
+			uart_send_entry->name, val);
+	}
+
+	HAL_UART_Transmit_DMA(&huart2, bufferTxUART, strlen((char *)bufferTxUART));
 }
 
 // standard data frame
